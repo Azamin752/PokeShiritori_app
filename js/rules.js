@@ -142,11 +142,122 @@
     return getEquivalentChars(head, settings).join("|");
   }
 
-  function getCandidates(requiredHead, words, usedWords, settings, options = {}) {
+  /*
+   * availableIndex
+   *
+   * 「残り安全単語」を頭文字グループごとに持つ索引。
+   * ここに入るのは、原則として「ンで終わらない単語」だけ。
+   * 実際に単語が使われたら removeFromAvailableIndex() で削除する。
+   */
+  function createAvailableIndex(words, settings, options = {}) {
+    const excludeN = options.excludeN !== false;
+
+    const index = {
+      type: "available-index",
+      settings,
+      excludeN,
+      byHeadKey: new Map(),
+      wordToHeadKey: new Map(),
+      wordMap: new Map()
+    };
+
+    for (const wordObj of words || []) {
+      if (excludeN && isEndingN(wordObj)) {
+        continue;
+      }
+
+      const headKey = makeHeadGroupKey(wordObj.head, settings);
+
+      if (!index.byHeadKey.has(headKey)) {
+        index.byHeadKey.set(headKey, new Map());
+      }
+
+      index.byHeadKey.get(headKey).set(wordObj.word, wordObj);
+      index.wordToHeadKey.set(wordObj.word, headKey);
+      index.wordMap.set(wordObj.word, wordObj);
+    }
+
+    return index;
+  }
+
+  function isAvailableIndex(value) {
+    return Boolean(value && value.type === "available-index");
+  }
+
+  function getCandidatesFromIndex(
+    requiredHead,
+    availableIndex,
+    settings,
+    temporaryUsedWords
+  ) {
+    const headKey = makeHeadGroupKey(requiredHead, settings);
+    const bucket = availableIndex.byHeadKey.get(headKey);
+
+    if (!bucket) {
+      return [];
+    }
+
+    const candidates = [];
+
+    for (const wordObj of bucket.values()) {
+      if (temporaryUsedWords && temporaryUsedWords.has(wordObj.word)) {
+        continue;
+      }
+
+      candidates.push(wordObj);
+    }
+
+    return candidates;
+  }
+
+  function removeFromAvailableIndex(availableIndex, wordObj) {
+    if (!availableIndex || !wordObj) {
+      return;
+    }
+
+    const headKey = availableIndex.wordToHeadKey.get(wordObj.word);
+
+    if (!headKey) {
+      return;
+    }
+
+    const bucket = availableIndex.byHeadKey.get(headKey);
+
+    if (bucket) {
+      bucket.delete(wordObj.word);
+    }
+
+    availableIndex.wordToHeadKey.delete(wordObj.word);
+    availableIndex.wordMap.delete(wordObj.word);
+  }
+
+  /*
+   * 互換用 getCandidates()
+   *
+   * 第2引数に通常の単語配列を渡した場合：
+   *   従来通り、配列を filter する。
+   *
+   * 第2引数に availableIndex を渡した場合：
+   *   頭文字ごとの残り安全単語リストから候補を取得する。
+   *
+   * 第3引数 usedWords は、availableIndex 使用時には
+   * 「仮想的に除外する単語Set」として使う。
+   */
+  function getCandidates(requiredHead, wordsOrIndex, usedWords, settings, options = {}) {
+    if (isAvailableIndex(wordsOrIndex)) {
+      return getCandidatesFromIndex(
+        requiredHead,
+        wordsOrIndex,
+        settings,
+        usedWords
+      );
+    }
+
+    const words = wordsOrIndex || [];
     const excludeN = options.excludeN !== false;
 
     return words.filter((wordObj) => {
-      if (usedWords.has(wordObj.word)) return false;
+      if (usedWords && usedWords.has(wordObj.word)) return false;
       if (excludeN && isEndingN(wordObj)) return false;
       return isHeadMatch(requiredHead, wordObj.head, settings);
     });
@@ -178,19 +289,24 @@
     });
   }
 
-  function analyzeCandidates(requiredHead, usedWords, settings) {
-    const words = App.wordlist || [];
-    const candidates = getCandidates(requiredHead, words, usedWords, settings, {
-      excludeN: true
-    });
+  function analyzeCandidates(requiredHead, usedWords, settings, availableIndex) {
+    const source = availableIndex || App.wordlist || [];
+
+    const candidates = getCandidates(
+      requiredHead,
+      source,
+      usedWords,
+      settings,
+      { excludeN: true }
+    );
 
     return candidates.map((wordObj) => {
-      const nextUsed = new Set(usedWords);
+      const nextUsed = new Set(usedWords || []);
       nextUsed.add(wordObj.word);
 
       const opponentCandidates = getCandidates(
         wordObj.tail,
-        words,
+        source,
         nextUsed,
         settings,
         { excludeN: true }
@@ -290,7 +406,13 @@
     getEquivalentChars,
     isHeadMatch,
     displayRequiredHead,
+
     getCandidates,
+    createAvailableIndex,
+    getCandidatesFromIndex,
+    removeFromAvailableIndex,
+    isAvailableIndex,
+
     getInitialHeadOptions,
     analyzeCandidates,
     checkWordlist

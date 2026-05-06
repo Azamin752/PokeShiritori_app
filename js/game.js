@@ -18,6 +18,11 @@
       gameCount,
       settings,
       usedWords: new Set(),
+      availableIndex: App.rules.createAvailableIndex(
+        words,
+        settings,
+        { excludeN: true }
+      ),
       requiredHead: null,
       isOver: false
     };
@@ -152,32 +157,32 @@
       return;
     }
 
-if (isUsed) {
-  App.ui.appendSystemMessage(
-    "その単語はすでに使用されています。もう一度入力してください。"
-  );
+    if (isUsed) {
+      App.ui.appendSystemMessage(
+        "その単語はすでに使用されています。もう一度入力してください。"
+      );
 
-  App.ui.clearInput();
+      App.ui.clearInput();
 
-  App.debug.logUserInput({
-    rawInput: raw,
-    normalizedInput,
-    matchedWord: wordObj.word,
-    requiredHead: state.requiredHead,
-    wordHead: wordObj.head,
-    wordTail: wordObj.tail,
-    isKnownWord: true,
-    isHeadValid,
-    isUsed,
-    isEndingN,
-    isSurrender: false,
-    result: "retry",
-    reason: "already-used"
-  });
+      App.debug.logUserInput({
+        rawInput: raw,
+        normalizedInput,
+        matchedWord: wordObj.word,
+        requiredHead: state.requiredHead,
+        wordHead: wordObj.head,
+        wordTail: wordObj.tail,
+        isKnownWord: true,
+        isHeadValid,
+        isUsed,
+        isEndingN,
+        isSurrender: false,
+        result: "retry",
+        reason: "already-used"
+      });
 
-  App.ui.focusInput();
-  return;
-}
+      App.ui.focusInput();
+      return;
+    }
 
     acceptWord("user", wordObj);
     App.ui.clearInput();
@@ -192,8 +197,8 @@ if (isUsed) {
 
     const candidateWords = App.rules.getCandidates(
       state.requiredHead,
-      App.wordlist,
-      state.usedWords,
+      state.availableIndex,
+      null,
       state.settings,
       { excludeN: true }
     );
@@ -210,6 +215,7 @@ if (isUsed) {
       candidateWords,
       usedWords: state.usedWords,
       allWords: App.wordlist,
+      availableIndex: state.availableIndex,
       requiredHead: state.requiredHead,
       settings: state.settings,
       state
@@ -253,6 +259,8 @@ if (isUsed) {
     }
 
     state.usedWords.add(wordObj.word);
+    App.rules.removeFromAvailableIndex(state.availableIndex, wordObj);
+
     state.requiredHead = wordObj.tail;
 
     updateRequiredHeadDisplay();

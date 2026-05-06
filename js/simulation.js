@@ -17,7 +17,6 @@
       runButton: document.getElementById("runSimulationButton"),
       status: document.getElementById("simulationStatus"),
 
-      // プログレスバー。HTML側にまだ無い場合でも落ちないようにしている。
       progress: document.getElementById("simulationProgress"),
       progressText: document.getElementById("simulationProgressText"),
 
@@ -100,15 +99,8 @@
     refs.runButton.disabled = true;
 
     const results = [];
-
-    // 何試合ごと、ではなく、何ミリ秒ごとにブラウザへ制御を返す。
-    // 重い戦略でも固まりにくくするため。
     const timeSliceMs = 25;
-
-    // ラリー履歴を詳細保存するのは最初の10試合だけ。
-    // 11試合目以降は compactStats に必要情報だけ残す。
     const maxStoredHistories = 10;
-
     let lastYieldTime = performance.now();
 
     updateProgress(0, gameCount);
@@ -116,10 +108,8 @@
     for (let i = 0; i < gameCount; i += 1) {
       const result = playOneGame(strategyA, strategyB, i, options);
 
-      // history を消す前に、集計に必要な情報だけ圧縮して保存する。
       attachCompactStats(result, options);
 
-      // ラリー履歴は最初の10試合分だけ残す。
       if (i >= maxStoredHistories) {
         result.history = [];
       }
@@ -205,6 +195,13 @@
     let currentIndex = firstIndex;
     let requiredHead = initial.requiredHead;
     const usedWords = new Set();
+
+    const availableIndex = App.rules.createAvailableIndex(
+      allWords,
+      settings,
+      { excludeN: true }
+    );
+
     const history = [];
     let lastMove = null;
 
@@ -214,8 +211,8 @@
 
       const candidateWords = App.rules.getCandidates(
         requiredHead,
-        allWords,
-        usedWords,
+        availableIndex,
+        null,
         settings,
         { excludeN: true }
       );
@@ -244,6 +241,7 @@
         candidateWords,
         usedWords,
         allWords,
+        availableIndex,
         requiredHead,
         settings,
         simulation: {
@@ -338,6 +336,8 @@
       lastMove = move;
 
       usedWords.add(selectedWord.word);
+      App.rules.removeFromAvailableIndex(availableIndex, selectedWord);
+
       requiredHead = selectedWord.tail;
       currentIndex = 1 - currentIndex;
     }
@@ -761,30 +761,22 @@
   function renderDetails(summary) {
     refs.detailResults.innerHTML = "";
 
-    refs.detailResults.appendChild(
-      makeSectionTitle("敗因別集計")
-    );
+    refs.detailResults.appendChild(makeSectionTitle("敗因別集計"));
     refs.detailResults.appendChild(
       makeMapTable(summary.lossReasons, ["敗因", "回数"])
     );
 
-    refs.detailResults.appendChild(
-      makeSectionTitle("よく使われた単語 Top 20")
-    );
+    refs.detailResults.appendChild(makeSectionTitle("よく使われた単語 Top 20"));
     refs.detailResults.appendChild(
       makeMapTable(topEntries(summary.usedWords, 20), ["単語", "回数"])
     );
 
-    refs.detailResults.appendChild(
-      makeSectionTitle("よく使われた語尾 Top 20")
-    );
+    refs.detailResults.appendChild(makeSectionTitle("よく使われた語尾 Top 20"));
     refs.detailResults.appendChild(
       makeMapTable(topEntries(summary.usedTails, 20), ["語尾", "回数"])
     );
 
-    refs.detailResults.appendChild(
-      makeSectionTitle("詰ませた文字")
-    );
+    refs.detailResults.appendChild(makeSectionTitle("詰ませた文字"));
     refs.detailResults.appendChild(
       makeMapTable(summary.checkmateHeads, ["文字", "回数"])
     );
@@ -796,12 +788,8 @@
       makeMapTable(summary.losingRequiredHeads, ["文字", "回数"])
     );
 
-    refs.detailResults.appendChild(
-      makeSectionTitle("初期文字ごとの勝率")
-    );
-    refs.detailResults.appendChild(
-      makeInitialHeadTable(summary)
-    );
+    refs.detailResults.appendChild(makeSectionTitle("初期文字ごとの勝率"));
+    refs.detailResults.appendChild(makeInitialHeadTable(summary));
 
     refs.detailResults.appendChild(
       makeSectionTitle("戦略ごとの平均使用単語数")
@@ -831,9 +819,7 @@
       makeMapTable(topEntries(summary.winningLastWords, 20), ["単語", "回数"])
     );
 
-    refs.detailResults.appendChild(
-      makeSectionTitle("ルを渡した後の勝敗")
-    );
+    refs.detailResults.appendChild(makeSectionTitle("ルを渡した後の勝敗"));
     refs.detailResults.appendChild(
       makeTable(
         ["項目", "値"],
@@ -861,9 +847,7 @@
       )
     );
 
-    refs.detailResults.appendChild(
-      makeSectionTitle("ル・ルチャブル関連")
-    );
+    refs.detailResults.appendChild(makeSectionTitle("ル・ルチャブル関連"));
 
     refs.detailResults.appendChild(
       makeTable(

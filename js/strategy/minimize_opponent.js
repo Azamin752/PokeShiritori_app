@@ -21,7 +21,7 @@
 
         const opponentCandidates = App.rules.getCandidates(
           wordObj.tail,
-          context.allWords,
+          context.availableIndex || context.allWords,
           nextUsedWords,
           context.settings,
           { excludeN: true }
@@ -52,9 +52,3 @@
     return words[index];
   }
 })(window.App);
-
-
-//相手候補最小化戦略
-//常に，相手の候補手が最も少ない手を選ぶようにする。
-//ただし，ルチャブル返しに100%引っかかる問題あり
-//したがって，相手の決まり手を常に監視するシステムの導入を検討。

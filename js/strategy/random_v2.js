@@ -22,7 +22,7 @@
 
         const opponentCandidates = App.rules.getCandidates(
           wordObj.tail,
-          context.allWords,
+          context.availableIndex || context.allWords,
           nextUsedWords,
           context.settings,
           { excludeN: true }

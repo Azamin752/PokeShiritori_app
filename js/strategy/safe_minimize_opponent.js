@@ -16,13 +16,15 @@
         return null;
       }
 
+      const source = context.availableIndex || context.allWords;
+
       const evaluatedCandidates = candidates.map((wordObj) => {
         const nextUsedWords = new Set(context.usedWords);
         nextUsedWords.add(wordObj.word);
 
         const opponentCandidates = App.rules.getCandidates(
           wordObj.tail,
-          context.allWords,
+          source,
           nextUsedWords,
           context.settings,
           { excludeN: true }
@@ -34,7 +36,7 @@
 
           const myNextCandidates = App.rules.getCandidates(
             opponentWord.tail,
-            context.allWords,
+            source,
             usedAfterOpponent,
             context.settings,
             { excludeN: true }
@@ -69,7 +71,11 @@
         })
         .map((item) => item.wordObj);
 
-      if (App.settings && App.settings.isDebugMode && App.settings.isDebugMode()) {
+      if (
+        App.settings &&
+        App.settings.isDebugMode &&
+        App.settings.isDebugMode()
+      ) {
         console.log("[safe_minimize_opponent]", {
           evaluatedCandidates: evaluatedCandidates.map((item) => ({
             word: item.wordObj.word,
@@ -94,10 +100,3 @@
     return words[index];
   }
 })(window.App);
-//相手候補最小化戦略
-//常に，相手の候補手が最も少ない手を選ぶようにする。
-//ただし，ルチャブル返しに100%引っかかる問題あり
-//したがって，相手の決まり手を常に監視するシステムの導入を検討。
-
-//安全監視つき相手候補最小化戦略
-//上記に加え，相手の決まり手が相手番に存在し得る選択を再警戒で避けるアルゴリズム。
