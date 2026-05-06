@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>しりとりAI戦略シミュレーション</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+
+<body>
+  <div class="simulation-shell">
+    <header class="simulation-header">
+      <div>
+        <h1>しりとりAI戦略シミュレーション</h1>
+        <p>
+          読み込まれている戦略同士を自動対戦させ、勝率や傾向を集計します。
+        </p>
+      </div>
+
+      <a class="simulation-link" href="index.html">通常プレイへ</a>
+    </header>
+
+    <main class="simulation-main">
+      <section class="simulation-panel">
+        <h2>対戦設定</h2>
+
+        <div class="simulation-controls">
+          <label>
+            <span>戦略A</span>
+            <select id="strategyASelect"></select>
+          </label>
+
+          <label>
+            <span>戦略B</span>
+            <select id="strategyBSelect"></select>
+          </label>
+
+          <label>
+            <span>試合数</span>
+            <input id="gameCountInput" type="number" min="1" max="100000" value="1000" />
+          </label>
+
+          <label>
+            <span>濁音・半濁音</span>
+            <select id="simulationDakutenModeSelect">
+              <option value="strict">厳密モード</option>
+              <option value="loose">ゆるめモード</option>
+            </select>
+          </label>
+          <label>
+            <span>注目単語</span>
+            <input id="focusWordInput" type="text" value="ルチャブル" />
+          </label>
+                
+          <label class="simulation-checkbox">
+            <input id="alternateFirstCheckbox" type="checkbox" checked />
+            <span>先攻・後攻を交互に入れ替える</span>
+          </label>
+
+          <label class="simulation-checkbox">
+            <input id="showSampleLogsCheckbox" type="checkbox" checked />
+            <span>サンプル試合ログを表示する</span>
+          </label>
+        </div>
+
+        <button id="runSimulationButton" type="button">
+          シミュレーション開始
+        </button>
+
+        <p id="simulationStatus" class="simulation-status"></p>
+      </section>
+
+      <section class="simulation-panel">
+        <h2>総合結果</h2>
+        <div id="summaryResults" class="simulation-results">
+          まだシミュレーションを実行していません。
+        </div>
+      </section>
+
+      <section class="simulation-panel">
+        <h2>詳細集計</h2>
+        <div id="detailResults" class="simulation-results"></div>
+      </section>
+
+      <section class="simulation-panel">
+        <h2>サンプル試合ログ</h2>
+        <pre id="sampleLogs" class="sample-logs">まだログはありません。</pre>
+      </section>
+    </main>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script src="js/wordlist.js"></script>
+  <script src="js/rules.js"></script>
+
+  <!-- 使いたい戦略ファイルをここに追加する -->
+  <script src="js/strategy/random.js"></script>
+  <script src="js/strategy/random_v2.js"></script>
+  <script src="js/strategy/minimize_opponent.js"></script>
+  <script src="js/strategy/safe_minimize_opponent.js"></script>
+
+  <script src="js/simulation.js"></script>
+</body>
+</html>
