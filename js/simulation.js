@@ -16,6 +16,11 @@
       showSampleLogsCheckbox: document.getElementById("showSampleLogsCheckbox"),
       runButton: document.getElementById("runSimulationButton"),
       status: document.getElementById("simulationStatus"),
+
+      // プログレスバー。HTML側にまだ無い場合でも落ちないようにしている。
+      progress: document.getElementById("simulationProgress"),
+      progressText: document.getElementById("simulationProgressText"),
+
       summaryResults: document.getElementById("summaryResults"),
       detailResults: document.getElementById("detailResults"),
       sampleLogs: document.getElementById("sampleLogs")
@@ -61,7 +66,7 @@
     return option;
   }
 
-  function runSimulation() {
+  async function runSimulation() {
     const strategyA = App.strategies[refs.strategyASelect.value];
     const strategyB = App.strategies[refs.strategyBSelect.value];
 
@@ -73,41 +78,84 @@
     const gameCount = clampNumber(
       Number(refs.gameCountInput.value),
       1,
-      100000,
+      10000000,
       1000
     );
 
-const focusWordObj = App.rules.findWordByInput(
-  refs.focusWordInput.value || "ルチャブル"
-);
+    const focusWordObj = App.rules.findWordByInput(
+      refs.focusWordInput.value || "ルチャブル"
+    );
 
-const options = {
-  dakutenMode: refs.dakutenModeSelect.value,
-  alternateFirst: refs.alternateFirstCheckbox.checked,
-  showSampleLogs: refs.showSampleLogsCheckbox.checked,
-  focusWord: focusWordObj ? focusWordObj.word : (refs.focusWordInput.value || "ルチャブル"),
-  maxTurns: (App.wordlist || []).length + 5
-};
+    const options = {
+      dakutenMode: refs.dakutenModeSelect.value,
+      alternateFirst: refs.alternateFirstCheckbox.checked,
+      showSampleLogs: refs.showSampleLogsCheckbox.checked,
+      focusWord: focusWordObj
+        ? focusWordObj.word
+        : (refs.focusWordInput.value || "ルチャブル"),
+      maxTurns: (App.wordlist || []).length + 5
+    };
+
     refs.status.textContent = "シミュレーション中...";
     refs.runButton.disabled = true;
 
-    // UI更新の余地を作るために少しだけ非同期化
-    setTimeout(() => {
-      const results = [];
+    const results = [];
 
-      for (let i = 0; i < gameCount; i += 1) {
-        results.push(playOneGame(strategyA, strategyB, i, options));
+    // 何試合ごと、ではなく、何ミリ秒ごとにブラウザへ制御を返す。
+    // 重い戦略でも固まりにくくするため。
+    const timeSliceMs = 25;
+
+    // ラリー履歴を詳細保存するのは最初の10試合だけ。
+    // 11試合目以降は compactStats に必要情報だけ残す。
+    const maxStoredHistories = 10;
+
+    let lastYieldTime = performance.now();
+
+    updateProgress(0, gameCount);
+
+    for (let i = 0; i < gameCount; i += 1) {
+      const result = playOneGame(strategyA, strategyB, i, options);
+
+      // history を消す前に、集計に必要な情報だけ圧縮して保存する。
+      attachCompactStats(result, options);
+
+      // ラリー履歴は最初の10試合分だけ残す。
+      if (i >= maxStoredHistories) {
+        result.history = [];
       }
 
-      const summary = summarizeResults(results, strategyA, strategyB, options);
+      results.push(result);
 
-      renderSummary(summary);
-      renderDetails(summary);
-      renderSampleLogs(results, options);
+      const now = performance.now();
+      const isLastGame = i + 1 === gameCount;
+      const shouldYield = now - lastYieldTime >= timeSliceMs;
 
-      refs.status.textContent = `${gameCount} 試合のシミュレーションが完了しました。`;
-      refs.runButton.disabled = false;
-    }, 0);
+      if (shouldYield || isLastGame) {
+        const done = i + 1;
+
+        refs.status.textContent =
+          `シミュレーション中... ${done} / ${gameCount} 試合完了`;
+
+        updateProgress(done, gameCount);
+
+        lastYieldTime = performance.now();
+
+        await yieldToBrowser();
+      }
+    }
+
+    const summary = summarizeResults(results, strategyA, strategyB, options);
+
+    renderSummary(summary);
+    renderDetails(summary);
+    renderSampleLogs(results, options);
+
+    refs.status.textContent =
+      `${gameCount} 試合のシミュレーションが完了しました。`;
+
+    updateProgress(gameCount, gameCount);
+
+    refs.runButton.disabled = false;
   }
 
   function playOneGame(strategyA, strategyB, gameIndex, options) {
@@ -313,256 +361,329 @@ const options = {
     };
   }
 
-function summarizeResults(results, strategyA, strategyB, options) {
-  const summary = {
-    strategyA,
-    strategyB,
-    options,
-    totalGames: results.length,
-    wins: {
-      A: 0,
-      B: 0
-    },
-    losses: {
-      A: 0,
-      B: 0
-    },
-    draws: 0,
-    firstWins: 0,
-    secondWins: 0,
-    firstGames: 0,
-    secondGames: 0,
-    byRole: {
-      A: {
-        firstGames: 0,
-        firstWins: 0,
-        secondGames: 0,
-        secondWins: 0,
-        totalMoves: 0
-      },
-      B: {
-        firstGames: 0,
-        firstWins: 0,
-        secondGames: 0,
-        secondWins: 0,
-        totalMoves: 0
-      }
-    },
-    totalTurns: 0,
-    minTurns: Infinity,
-    maxTurns: 0,
-    lossReasons: {},
-    usedWords: {},
-    usedWordsByPlayer: {
-      A: {},
-      B: {}
-    },
-    usedTails: {},
-    checkmateHeads: {},
-    losingRequiredHeads: {},
-    initialHeadStats: {},
-    winningLastWords: {},
-    focusWordStats: {
-      word: options.focusWord,
-      gamesWithFocusWord: 0,
-      winsAfterFocusWord: {
+  function attachCompactStats(result, options) {
+    const compact = {
+      totalMovesByPlayer: {
         A: 0,
         B: 0
       },
-      lossesAfterFocusWord: {
-        A: 0,
-        B: 0
+      usedWords: {},
+      usedWordsByPlayer: {
+        A: {},
+        B: {}
       },
-      usedByPlayer: {
-        A: 0,
-        B: 0
-      }
-    },
-    ruPassStats: {
-      gamesWithRuPassed: 0,
-      winsAfterRuPassed: {
-        A: 0,
-        B: 0
-      },
-      lossesAfterRuPassed: {
-        A: 0,
-        B: 0
-      }
-    },
-    ruStats: {
+      usedTails: {},
       ruPassedCount: 0,
-      ruCandidateNoneLossCount: 0,
+      hasRuPassed: false,
+      hasLuchabull: false,
       luchabullUsedCount: 0,
       luchabullUsedByPlayer: {
         A: 0,
         B: 0
       },
-      luchabullDecisiveWinCount: 0,
-      luchabullGames: 0,
-      luchabullWinner: {
-        A: 0,
-        B: 0
-      },
-      luchabullLoser: {
-        A: 0,
-        B: 0
-      }
-    },
-    results
-  };
-
-  for (const result of results) {
-    if (result.firstLabel) {
-      summary.firstGames += 1;
-      summary.byRole[result.firstLabel].firstGames += 1;
-      summary.byRole[result.secondLabel].secondGames += 1;
-    }
-
-    if (result.winnerLabel) {
-      summary.wins[result.winnerLabel] += 1;
-      summary.losses[result.loserLabel] += 1;
-
-      if (result.winnerLabel === result.firstLabel) {
-        summary.firstWins += 1;
-        summary.byRole[result.winnerLabel].firstWins += 1;
-      }
-
-      if (result.winnerLabel === result.secondLabel) {
-        summary.secondWins += 1;
-        summary.byRole[result.winnerLabel].secondWins += 1;
-      }
-    } else {
-      summary.draws += 1;
-    }
-
-    summary.totalTurns += result.turns;
-    summary.minTurns = Math.min(summary.minTurns, result.turns);
-    summary.maxTurns = Math.max(summary.maxTurns, result.turns);
-
-    increment(summary.lossReasons, reasonLabel(result.reason));
-
-    updateInitialHeadStats(summary, result);
-
-    if (result.reason === "candidate-none") {
-      increment(
-        summary.checkmateHeads,
-        result.losingRequiredHeadDisplay || "-"
-      );
-
-      increment(
-        summary.losingRequiredHeads,
-        result.losingRequiredHeadDisplay || "-"
-      );
-
-      if (isRuGroup(result.losingRequiredHead, result)) {
-        summary.ruStats.ruCandidateNoneLossCount += 1;
-      }
-
-      if (
-        result.lastMove &&
-        result.lastMove.word === SPECIAL_WORD_LUCHABULL
-      ) {
-        summary.ruStats.luchabullDecisiveWinCount += 1;
-      }
-    }
-
-    if (result.lastMove && result.winnerLabel) {
-      increment(summary.winningLastWords, result.lastMove.word);
-    }
-
-    const gameFlags = {
       hasFocusWord: false,
-      focusWordPlayers: new Set(),
-      hasRuPassed: false,
-      hasLuchabull: false
+      focusWordUsedByPlayer: {
+        A: 0,
+        B: 0
+      }
     };
 
-    for (const move of result.history) {
-      summary.byRole[move.playerLabel].totalMoves += 1;
+    for (const move of result.history || []) {
+      compact.totalMovesByPlayer[move.playerLabel] += 1;
 
-      increment(summary.usedWords, move.word);
-      increment(summary.usedWordsByPlayer[move.playerLabel], move.word);
-      increment(summary.usedTails, move.tail);
+      increment(compact.usedWords, move.word);
+      increment(compact.usedWordsByPlayer[move.playerLabel], move.word);
+      increment(compact.usedTails, move.tail);
 
       if (move.tail === "ル") {
-        summary.ruStats.ruPassedCount += 1;
-        gameFlags.hasRuPassed = true;
+        compact.ruPassedCount += 1;
+        compact.hasRuPassed = true;
       }
 
       if (move.word === SPECIAL_WORD_LUCHABULL) {
-        summary.ruStats.luchabullUsedCount += 1;
-        summary.ruStats.luchabullUsedByPlayer[move.playerLabel] += 1;
-        gameFlags.hasLuchabull = true;
+        compact.hasLuchabull = true;
+        compact.luchabullUsedCount += 1;
+        compact.luchabullUsedByPlayer[move.playerLabel] += 1;
       }
 
       if (move.word === options.focusWord) {
-        summary.focusWordStats.usedByPlayer[move.playerLabel] += 1;
-        gameFlags.hasFocusWord = true;
-        gameFlags.focusWordPlayers.add(move.playerLabel);
+        compact.hasFocusWord = true;
+        compact.focusWordUsedByPlayer[move.playerLabel] += 1;
       }
     }
 
-    if (gameFlags.hasRuPassed) {
-      summary.ruPassStats.gamesWithRuPassed += 1;
-
-      if (result.winnerLabel) {
-        summary.ruPassStats.winsAfterRuPassed[result.winnerLabel] += 1;
-        summary.ruPassStats.lossesAfterRuPassed[result.loserLabel] += 1;
-      }
-    }
-
-    if (gameFlags.hasLuchabull) {
-      summary.ruStats.luchabullGames += 1;
-
-      if (result.winnerLabel) {
-        summary.ruStats.luchabullWinner[result.winnerLabel] += 1;
-        summary.ruStats.luchabullLoser[result.loserLabel] += 1;
-      }
-    }
-
-    if (gameFlags.hasFocusWord) {
-      summary.focusWordStats.gamesWithFocusWord += 1;
-
-      if (result.winnerLabel) {
-        summary.focusWordStats.winsAfterFocusWord[result.winnerLabel] += 1;
-        summary.focusWordStats.lossesAfterFocusWord[result.loserLabel] += 1;
-      }
-    }
+    result.compactStats = compact;
   }
 
-  if (summary.minTurns === Infinity) {
-    summary.minTurns = 0;
-  }
-
-  return summary;
-}
-
-function updateInitialHeadStats(summary, result) {
-  const key = result.initialHeadDisplay || "-";
-
-  if (!summary.initialHeadStats[key]) {
-    summary.initialHeadStats[key] = {
-      games: 0,
-      winsA: 0,
-      winsB: 0,
+  function summarizeResults(results, strategyA, strategyB, options) {
+    const summary = {
+      strategyA,
+      strategyB,
+      options,
+      totalGames: results.length,
+      wins: {
+        A: 0,
+        B: 0
+      },
+      losses: {
+        A: 0,
+        B: 0
+      },
       draws: 0,
-      totalTurns: 0
+      firstWins: 0,
+      secondWins: 0,
+      firstGames: 0,
+      secondGames: 0,
+      byRole: {
+        A: {
+          firstGames: 0,
+          firstWins: 0,
+          secondGames: 0,
+          secondWins: 0,
+          totalMoves: 0
+        },
+        B: {
+          firstGames: 0,
+          firstWins: 0,
+          secondGames: 0,
+          secondWins: 0,
+          totalMoves: 0
+        }
+      },
+      totalTurns: 0,
+      minTurns: Infinity,
+      maxTurns: 0,
+      lossReasons: {},
+      usedWords: {},
+      usedWordsByPlayer: {
+        A: {},
+        B: {}
+      },
+      usedTails: {},
+      checkmateHeads: {},
+      losingRequiredHeads: {},
+      initialHeadStats: {},
+      winningLastWords: {},
+      focusWordStats: {
+        word: options.focusWord,
+        gamesWithFocusWord: 0,
+        winsAfterFocusWord: {
+          A: 0,
+          B: 0
+        },
+        lossesAfterFocusWord: {
+          A: 0,
+          B: 0
+        },
+        usedByPlayer: {
+          A: 0,
+          B: 0
+        }
+      },
+      ruPassStats: {
+        gamesWithRuPassed: 0,
+        winsAfterRuPassed: {
+          A: 0,
+          B: 0
+        },
+        lossesAfterRuPassed: {
+          A: 0,
+          B: 0
+        }
+      },
+      ruStats: {
+        ruPassedCount: 0,
+        ruCandidateNoneLossCount: 0,
+        luchabullUsedCount: 0,
+        luchabullUsedByPlayer: {
+          A: 0,
+          B: 0
+        },
+        luchabullDecisiveWinCount: 0,
+        luchabullGames: 0,
+        luchabullWinner: {
+          A: 0,
+          B: 0
+        },
+        luchabullLoser: {
+          A: 0,
+          B: 0
+        }
+      },
+      results
     };
+
+    for (const result of results) {
+      if (result.firstLabel) {
+        summary.firstGames += 1;
+        summary.byRole[result.firstLabel].firstGames += 1;
+        summary.byRole[result.secondLabel].secondGames += 1;
+      }
+
+      if (result.winnerLabel) {
+        summary.wins[result.winnerLabel] += 1;
+        summary.losses[result.loserLabel] += 1;
+
+        if (result.winnerLabel === result.firstLabel) {
+          summary.firstWins += 1;
+          summary.byRole[result.winnerLabel].firstWins += 1;
+        }
+
+        if (result.winnerLabel === result.secondLabel) {
+          summary.secondWins += 1;
+          summary.byRole[result.winnerLabel].secondWins += 1;
+        }
+      } else {
+        summary.draws += 1;
+      }
+
+      summary.totalTurns += result.turns;
+      summary.minTurns = Math.min(summary.minTurns, result.turns);
+      summary.maxTurns = Math.max(summary.maxTurns, result.turns);
+
+      increment(summary.lossReasons, reasonLabel(result.reason));
+
+      updateInitialHeadStats(summary, result);
+
+      if (result.reason === "candidate-none") {
+        increment(
+          summary.checkmateHeads,
+          result.losingRequiredHeadDisplay || "-"
+        );
+
+        increment(
+          summary.losingRequiredHeads,
+          result.losingRequiredHeadDisplay || "-"
+        );
+
+        if (isRuGroup(result.losingRequiredHead, result)) {
+          summary.ruStats.ruCandidateNoneLossCount += 1;
+        }
+
+        if (
+          result.lastMove &&
+          result.lastMove.word === SPECIAL_WORD_LUCHABULL
+        ) {
+          summary.ruStats.luchabullDecisiveWinCount += 1;
+        }
+      }
+
+      if (result.lastMove && result.winnerLabel) {
+        increment(summary.winningLastWords, result.lastMove.word);
+      }
+
+      const gameFlags = {
+        hasFocusWord: false,
+        hasRuPassed: false,
+        hasLuchabull: false
+      };
+
+      const compact = result.compactStats || {
+        totalMovesByPlayer: { A: 0, B: 0 },
+        usedWords: {},
+        usedWordsByPlayer: { A: {}, B: {} },
+        usedTails: {},
+        ruPassedCount: 0,
+        hasRuPassed: false,
+        hasLuchabull: false,
+        luchabullUsedCount: 0,
+        luchabullUsedByPlayer: { A: 0, B: 0 },
+        hasFocusWord: false,
+        focusWordUsedByPlayer: { A: 0, B: 0 }
+      };
+
+      summary.byRole.A.totalMoves += compact.totalMovesByPlayer.A;
+      summary.byRole.B.totalMoves += compact.totalMovesByPlayer.B;
+
+      mergeCounts(summary.usedWords, compact.usedWords);
+      mergeCounts(summary.usedWordsByPlayer.A, compact.usedWordsByPlayer.A);
+      mergeCounts(summary.usedWordsByPlayer.B, compact.usedWordsByPlayer.B);
+      mergeCounts(summary.usedTails, compact.usedTails);
+
+      summary.ruStats.ruPassedCount += compact.ruPassedCount;
+
+      if (compact.hasRuPassed) {
+        gameFlags.hasRuPassed = true;
+      }
+
+      if (compact.hasLuchabull) {
+        gameFlags.hasLuchabull = true;
+        summary.ruStats.luchabullUsedCount += compact.luchabullUsedCount;
+        summary.ruStats.luchabullUsedByPlayer.A +=
+          compact.luchabullUsedByPlayer.A;
+        summary.ruStats.luchabullUsedByPlayer.B +=
+          compact.luchabullUsedByPlayer.B;
+      }
+
+      if (compact.hasFocusWord) {
+        gameFlags.hasFocusWord = true;
+        summary.focusWordStats.usedByPlayer.A +=
+          compact.focusWordUsedByPlayer.A;
+        summary.focusWordStats.usedByPlayer.B +=
+          compact.focusWordUsedByPlayer.B;
+      }
+
+      if (gameFlags.hasRuPassed) {
+        summary.ruPassStats.gamesWithRuPassed += 1;
+
+        if (result.winnerLabel) {
+          summary.ruPassStats.winsAfterRuPassed[result.winnerLabel] += 1;
+          summary.ruPassStats.lossesAfterRuPassed[result.loserLabel] += 1;
+        }
+      }
+
+      if (gameFlags.hasLuchabull) {
+        summary.ruStats.luchabullGames += 1;
+
+        if (result.winnerLabel) {
+          summary.ruStats.luchabullWinner[result.winnerLabel] += 1;
+          summary.ruStats.luchabullLoser[result.loserLabel] += 1;
+        }
+      }
+
+      if (gameFlags.hasFocusWord) {
+        summary.focusWordStats.gamesWithFocusWord += 1;
+
+        if (result.winnerLabel) {
+          summary.focusWordStats.winsAfterFocusWord[result.winnerLabel] += 1;
+          summary.focusWordStats.lossesAfterFocusWord[result.loserLabel] += 1;
+        }
+      }
+    }
+
+    if (summary.minTurns === Infinity) {
+      summary.minTurns = 0;
+    }
+
+    return summary;
   }
 
-  const item = summary.initialHeadStats[key];
+  function updateInitialHeadStats(summary, result) {
+    const key = result.initialHeadDisplay || "-";
 
-  item.games += 1;
-  item.totalTurns += result.turns;
+    if (!summary.initialHeadStats[key]) {
+      summary.initialHeadStats[key] = {
+        games: 0,
+        winsA: 0,
+        winsB: 0,
+        draws: 0,
+        totalTurns: 0
+      };
+    }
 
-  if (result.winnerLabel === "A") {
-    item.winsA += 1;
-  } else if (result.winnerLabel === "B") {
-    item.winsB += 1;
-  } else {
-    item.draws += 1;
+    const item = summary.initialHeadStats[key];
+
+    item.games += 1;
+    item.totalTurns += result.turns;
+
+    if (result.winnerLabel === "A") {
+      item.winsA += 1;
+    } else if (result.winnerLabel === "B") {
+      item.winsB += 1;
+    } else {
+      item.draws += 1;
+    }
   }
-}
 
   function renderSummary(summary) {
     const aName = summary.strategyA.name || summary.strategyA.id;
@@ -637,175 +758,175 @@ function updateInitialHeadStats(summary, result) {
     refs.summaryResults.appendChild(table);
   }
 
-function renderDetails(summary) {
-  refs.detailResults.innerHTML = "";
+  function renderDetails(summary) {
+    refs.detailResults.innerHTML = "";
 
-  refs.detailResults.appendChild(
-    makeSectionTitle("敗因別集計")
-  );
-  refs.detailResults.appendChild(
-    makeMapTable(summary.lossReasons, ["敗因", "回数"])
-  );
+    refs.detailResults.appendChild(
+      makeSectionTitle("敗因別集計")
+    );
+    refs.detailResults.appendChild(
+      makeMapTable(summary.lossReasons, ["敗因", "回数"])
+    );
 
-  refs.detailResults.appendChild(
-    makeSectionTitle("よく使われた単語 Top 20")
-  );
-  refs.detailResults.appendChild(
-    makeMapTable(topEntries(summary.usedWords, 20), ["単語", "回数"])
-  );
+    refs.detailResults.appendChild(
+      makeSectionTitle("よく使われた単語 Top 20")
+    );
+    refs.detailResults.appendChild(
+      makeMapTable(topEntries(summary.usedWords, 20), ["単語", "回数"])
+    );
 
-  refs.detailResults.appendChild(
-    makeSectionTitle("よく使われた語尾 Top 20")
-  );
-  refs.detailResults.appendChild(
-    makeMapTable(topEntries(summary.usedTails, 20), ["語尾", "回数"])
-  );
+    refs.detailResults.appendChild(
+      makeSectionTitle("よく使われた語尾 Top 20")
+    );
+    refs.detailResults.appendChild(
+      makeMapTable(topEntries(summary.usedTails, 20), ["語尾", "回数"])
+    );
 
-  refs.detailResults.appendChild(
-    makeSectionTitle("詰ませた文字")
-  );
-  refs.detailResults.appendChild(
-    makeMapTable(summary.checkmateHeads, ["文字", "回数"])
-  );
+    refs.detailResults.appendChild(
+      makeSectionTitle("詰ませた文字")
+    );
+    refs.detailResults.appendChild(
+      makeMapTable(summary.checkmateHeads, ["文字", "回数"])
+    );
 
-  refs.detailResults.appendChild(
-    makeSectionTitle("負ける直前に要求されていた文字")
-  );
-  refs.detailResults.appendChild(
-    makeMapTable(summary.losingRequiredHeads, ["文字", "回数"])
-  );
+    refs.detailResults.appendChild(
+      makeSectionTitle("負ける直前に要求されていた文字")
+    );
+    refs.detailResults.appendChild(
+      makeMapTable(summary.losingRequiredHeads, ["文字", "回数"])
+    );
 
-  refs.detailResults.appendChild(
-    makeSectionTitle("初期文字ごとの勝率")
-  );
-  refs.detailResults.appendChild(
-    makeInitialHeadTable(summary)
-  );
+    refs.detailResults.appendChild(
+      makeSectionTitle("初期文字ごとの勝率")
+    );
+    refs.detailResults.appendChild(
+      makeInitialHeadTable(summary)
+    );
 
-  refs.detailResults.appendChild(
-    makeSectionTitle("戦略ごとの平均使用単語数")
-  );
-  refs.detailResults.appendChild(
-    makeTable(
-      ["戦略", "平均使用単語数/試合", "総使用単語数"],
-      [
+    refs.detailResults.appendChild(
+      makeSectionTitle("戦略ごとの平均使用単語数")
+    );
+    refs.detailResults.appendChild(
+      makeTable(
+        ["戦略", "平均使用単語数/試合", "総使用単語数"],
         [
-          summary.strategyA.name || summary.strategyA.id,
-          average(summary.byRole.A.totalMoves, summary.totalGames).toFixed(2),
-          summary.byRole.A.totalMoves
-        ],
-        [
-          summary.strategyB.name || summary.strategyB.id,
-          average(summary.byRole.B.totalMoves, summary.totalGames).toFixed(2),
-          summary.byRole.B.totalMoves
+          [
+            summary.strategyA.name || summary.strategyA.id,
+            average(summary.byRole.A.totalMoves, summary.totalGames).toFixed(2),
+            summary.byRole.A.totalMoves
+          ],
+          [
+            summary.strategyB.name || summary.strategyB.id,
+            average(summary.byRole.B.totalMoves, summary.totalGames).toFixed(2),
+            summary.byRole.B.totalMoves
+          ]
         ]
-      ]
-    )
-  );
+      )
+    );
 
-  refs.detailResults.appendChild(
-    makeSectionTitle("勝った試合で最後に出した単語 Top 20")
-  );
-  refs.detailResults.appendChild(
-    makeMapTable(topEntries(summary.winningLastWords, 20), ["単語", "回数"])
-  );
+    refs.detailResults.appendChild(
+      makeSectionTitle("勝った試合で最後に出した単語 Top 20")
+    );
+    refs.detailResults.appendChild(
+      makeMapTable(topEntries(summary.winningLastWords, 20), ["単語", "回数"])
+    );
 
-  refs.detailResults.appendChild(
-    makeSectionTitle("ルを渡した後の勝敗")
-  );
-  refs.detailResults.appendChild(
-    makeTable(
-      ["項目", "値"],
-      [
-        ["ルを含む試合数", summary.ruPassStats.gamesWithRuPassed],
-        ["ルを含む試合でAが勝利", summary.ruPassStats.winsAfterRuPassed.A],
-        ["ルを含む試合でBが勝利", summary.ruPassStats.winsAfterRuPassed.B],
-        ["ルを含む試合でAが敗北", summary.ruPassStats.lossesAfterRuPassed.A],
-        ["ルを含む試合でBが敗北", summary.ruPassStats.lossesAfterRuPassed.B],
+    refs.detailResults.appendChild(
+      makeSectionTitle("ルを渡した後の勝敗")
+    );
+    refs.detailResults.appendChild(
+      makeTable(
+        ["項目", "値"],
         [
-          "ルを含む試合でA勝率",
-          percent(
-            summary.ruPassStats.winsAfterRuPassed.A,
-            summary.ruPassStats.gamesWithRuPassed
-          )
-        ],
-        [
-          "ルを含む試合でB勝率",
-          percent(
-            summary.ruPassStats.winsAfterRuPassed.B,
-            summary.ruPassStats.gamesWithRuPassed
-          )
+          ["ルを含む試合数", summary.ruPassStats.gamesWithRuPassed],
+          ["ルを含む試合でAが勝利", summary.ruPassStats.winsAfterRuPassed.A],
+          ["ルを含む試合でBが勝利", summary.ruPassStats.winsAfterRuPassed.B],
+          ["ルを含む試合でAが敗北", summary.ruPassStats.lossesAfterRuPassed.A],
+          ["ルを含む試合でBが敗北", summary.ruPassStats.lossesAfterRuPassed.B],
+          [
+            "ルを含む試合でA勝率",
+            percent(
+              summary.ruPassStats.winsAfterRuPassed.A,
+              summary.ruPassStats.gamesWithRuPassed
+            )
+          ],
+          [
+            "ルを含む試合でB勝率",
+            percent(
+              summary.ruPassStats.winsAfterRuPassed.B,
+              summary.ruPassStats.gamesWithRuPassed
+            )
+          ]
         ]
-      ]
-    )
-  );
+      )
+    );
 
-  refs.detailResults.appendChild(
-    makeSectionTitle("ル・ルチャブル関連")
-  );
+    refs.detailResults.appendChild(
+      makeSectionTitle("ル・ルチャブル関連")
+    );
 
-  refs.detailResults.appendChild(
-    makeTable(
-      ["項目", "値"],
-      [
-        ["ルを渡した総回数", summary.ruStats.ruPassedCount],
-        ["ルで候補なし敗北した回数", summary.ruStats.ruCandidateNoneLossCount],
-        ["ルチャブル使用回数", summary.ruStats.luchabullUsedCount],
-        ["Aのルチャブル使用回数", summary.ruStats.luchabullUsedByPlayer.A],
-        ["Bのルチャブル使用回数", summary.ruStats.luchabullUsedByPlayer.B],
-        ["ルチャブルが出た試合数", summary.ruStats.luchabullGames],
-        ["ルチャブルが出た試合でA勝利", summary.ruStats.luchabullWinner.A],
-        ["ルチャブルが出た試合でB勝利", summary.ruStats.luchabullWinner.B],
-        ["ルチャブルが直接決着に絡んだ回数", summary.ruStats.luchabullDecisiveWinCount]
-      ]
-    )
-  );
-
-  refs.detailResults.appendChild(
-    makeSectionTitle(`注目単語「${summary.focusWordStats.word}」使用時の勝敗`)
-  );
-
-  refs.detailResults.appendChild(
-    makeTable(
-      ["項目", "値"],
-      [
-        ["注目単語が出た試合数", summary.focusWordStats.gamesWithFocusWord],
-        ["Aの注目単語使用回数", summary.focusWordStats.usedByPlayer.A],
-        ["Bの注目単語使用回数", summary.focusWordStats.usedByPlayer.B],
-        ["注目単語が出た試合でA勝利", summary.focusWordStats.winsAfterFocusWord.A],
-        ["注目単語が出た試合でB勝利", summary.focusWordStats.winsAfterFocusWord.B],
+    refs.detailResults.appendChild(
+      makeTable(
+        ["項目", "値"],
         [
-          "注目単語が出た試合でA勝率",
-          percent(
-            summary.focusWordStats.winsAfterFocusWord.A,
-            summary.focusWordStats.gamesWithFocusWord
-          )
-        ],
-        [
-          "注目単語が出た試合でB勝率",
-          percent(
-            summary.focusWordStats.winsAfterFocusWord.B,
-            summary.focusWordStats.gamesWithFocusWord
-          )
+          ["ルを渡した総回数", summary.ruStats.ruPassedCount],
+          ["ルで候補なし敗北した回数", summary.ruStats.ruCandidateNoneLossCount],
+          ["ルチャブル使用回数", summary.ruStats.luchabullUsedCount],
+          ["Aのルチャブル使用回数", summary.ruStats.luchabullUsedByPlayer.A],
+          ["Bのルチャブル使用回数", summary.ruStats.luchabullUsedByPlayer.B],
+          ["ルチャブルが出た試合数", summary.ruStats.luchabullGames],
+          ["ルチャブルが出た試合でA勝利", summary.ruStats.luchabullWinner.A],
+          ["ルチャブルが出た試合でB勝利", summary.ruStats.luchabullWinner.B],
+          ["ルチャブルが直接決着に絡んだ回数", summary.ruStats.luchabullDecisiveWinCount]
         ]
-      ]
-    )
-  );
+      )
+    );
 
-  refs.detailResults.appendChild(
-    makeSectionTitle("戦略Aがよく使った単語 Top 10")
-  );
-  refs.detailResults.appendChild(
-    makeMapTable(topEntries(summary.usedWordsByPlayer.A, 10), ["単語", "回数"])
-  );
+    refs.detailResults.appendChild(
+      makeSectionTitle(`注目単語「${summary.focusWordStats.word}」使用時の勝敗`)
+    );
 
-  refs.detailResults.appendChild(
-    makeSectionTitle("戦略Bがよく使った単語 Top 10")
-  );
-  refs.detailResults.appendChild(
-    makeMapTable(topEntries(summary.usedWordsByPlayer.B, 10), ["単語", "回数"])
-  );
-}
+    refs.detailResults.appendChild(
+      makeTable(
+        ["項目", "値"],
+        [
+          ["注目単語が出た試合数", summary.focusWordStats.gamesWithFocusWord],
+          ["Aの注目単語使用回数", summary.focusWordStats.usedByPlayer.A],
+          ["Bの注目単語使用回数", summary.focusWordStats.usedByPlayer.B],
+          ["注目単語が出た試合でA勝利", summary.focusWordStats.winsAfterFocusWord.A],
+          ["注目単語が出た試合でB勝利", summary.focusWordStats.winsAfterFocusWord.B],
+          [
+            "注目単語が出た試合でA勝率",
+            percent(
+              summary.focusWordStats.winsAfterFocusWord.A,
+              summary.focusWordStats.gamesWithFocusWord
+            )
+          ],
+          [
+            "注目単語が出た試合でB勝率",
+            percent(
+              summary.focusWordStats.winsAfterFocusWord.B,
+              summary.focusWordStats.gamesWithFocusWord
+            )
+          ]
+        ]
+      )
+    );
+
+    refs.detailResults.appendChild(
+      makeSectionTitle("戦略Aがよく使った単語 Top 10")
+    );
+    refs.detailResults.appendChild(
+      makeMapTable(topEntries(summary.usedWordsByPlayer.A, 10), ["単語", "回数"])
+    );
+
+    refs.detailResults.appendChild(
+      makeSectionTitle("戦略Bがよく使った単語 Top 10")
+    );
+    refs.detailResults.appendChild(
+      makeMapTable(topEntries(summary.usedWordsByPlayer.B, 10), ["単語", "回数"])
+    );
+  }
 
   function renderSampleLogs(results, options) {
     if (!options.showSampleLogs) {
@@ -813,7 +934,7 @@ function renderDetails(summary) {
       return;
     }
 
-    const sampleResults = results.slice(0, 3);
+    const sampleResults = results.slice(0, 10);
 
     const text = sampleResults.map((result, index) => {
       const lines = [];
@@ -881,7 +1002,6 @@ function renderDetails(summary) {
     return makeTable(headers, entries);
   }
 
-
   function makeTable(headers, rows) {
     const table = document.createElement("table");
     table.className = "simulation-table";
@@ -918,35 +1038,52 @@ function renderDetails(summary) {
   }
 
   function makeInitialHeadTable(summary) {
-  const rows = Object.entries(summary.initialHeadStats)
-    .sort((a, b) => b[1].games - a[1].games)
-    .map(([head, item]) => {
-      return [
-        head,
-        item.games,
-        item.winsA,
-        item.winsB,
-        item.draws,
-        percent(item.winsA, item.games),
-        percent(item.winsB, item.games),
-        average(item.totalTurns, item.games).toFixed(2)
-      ];
-    });
+    const rows = Object.entries(summary.initialHeadStats)
+      .sort((a, b) => b[1].games - a[1].games)
+      .map(([head, item]) => {
+        return [
+          head,
+          item.games,
+          item.winsA,
+          item.winsB,
+          item.draws,
+          percent(item.winsA, item.games),
+          percent(item.winsB, item.games),
+          average(item.totalTurns, item.games).toFixed(2)
+        ];
+      });
 
-  return makeTable(
-    [
-      "初期文字",
-      "試合数",
-      "A勝利",
-      "B勝利",
-      "引き分け",
-      "A勝率",
-      "B勝率",
-      "平均ターン"
-    ],
-    rows
-  );
-}
+    return makeTable(
+      [
+        "初期文字",
+        "試合数",
+        "A勝利",
+        "B勝利",
+        "引き分け",
+        "A勝率",
+        "B勝率",
+        "平均ターン"
+      ],
+      rows
+    );
+  }
+
+  function updateProgress(done, total) {
+    if (!refs.progress || !refs.progressText) return;
+
+    const ratio = total > 0 ? done / total : 0;
+    const percentValue = Math.floor(ratio * 100);
+
+    refs.progress.value = done;
+    refs.progress.max = total;
+    refs.progressText.textContent = `${percentValue}%`;
+  }
+
+  function yieldToBrowser() {
+    return new Promise((resolve) => {
+      setTimeout(resolve, 0);
+    });
+  }
 
   function pickRandom(items) {
     const index = Math.floor(Math.random() * items.length);
@@ -961,6 +1098,12 @@ function renderDetails(summary) {
   function increment(mapObj, key, amount = 1) {
     const safeKey = key || "-";
     mapObj[safeKey] = (mapObj[safeKey] || 0) + amount;
+  }
+
+  function mergeCounts(target, source) {
+    for (const [key, value] of Object.entries(source || {})) {
+      increment(target, key, value);
+    }
   }
 
   function topEntries(mapObj, limit) {

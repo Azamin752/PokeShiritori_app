@@ -63,11 +63,16 @@
           </label>
         </div>
 
-        <button id="runSimulationButton" type="button">
-          シミュレーション開始
-        </button>
+          <button id="runSimulationButton" type="button">
+            シミュレーション開始
+          </button>
 
-        <p id="simulationStatus" class="simulation-status"></p>
+          <p id="simulationStatus" class="simulation-status"></p>
+
+          <div class="progress-wrap">
+            <progress id="simulationProgress" value="0" max="100"></progress>
+            <span id="simulationProgressText">0%</span>
+          </div>
       </section>
 
       <section class="simulation-panel">

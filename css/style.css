@@ -515,3 +515,22 @@ button {
 .header-link:hover {
   background: #dfeaff;
 }
+
+.progress-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.progress-wrap progress {
+  flex: 1;
+  height: 18px;
+}
+
+#simulationProgressText {
+  min-width: 52px;
+  text-align: right;
+  font-weight: 700;
+  color: #445;
+}
