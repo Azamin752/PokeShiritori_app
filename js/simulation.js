@@ -374,6 +374,13 @@
         B: {}
       },
       usedTails: {},
+
+      usedTransitions: {},
+      usedTransitionsByPlayer: {
+        A: {},
+        B: {}
+      },
+
       ruPassedCount: 0,
       hasRuPassed: false,
       hasLuchabull: false,
@@ -395,6 +402,11 @@
       increment(compact.usedWords, move.word);
       increment(compact.usedWordsByPlayer[move.playerLabel], move.word);
       increment(compact.usedTails, move.tail);
+
+      const transition = makeTransitionLabel(move.head, move.tail);
+
+      increment(compact.usedTransitions, transition);
+      increment(compact.usedTransitionsByPlayer[move.playerLabel], transition);
 
       if (move.tail === "ル") {
         compact.ruPassedCount += 1;
@@ -465,6 +477,33 @@
       losingRequiredHeads: {},
       initialHeadStats: {},
       winningLastWords: {},
+
+      transitionStats: {
+        used: {},
+        usedByPlayer: {
+          A: {},
+          B: {}
+        },
+        lethal: {},
+        lethalByPlayer: {
+          A: {},
+          B: {}
+        }
+      },
+
+      lethalStats: {
+        byPlayer: {
+          A: {
+            words: {},
+            heads: {}
+          },
+          B: {
+            words: {},
+            heads: {}
+          }
+        }
+      },
+
       focusWordStats: {
         word: options.focusWord,
         gamesWithFocusWord: 0,
@@ -554,15 +593,34 @@
     updateInitialHeadStats(summary, result);
 
     if (result.reason === "candidate-none") {
-      increment(
-        summary.checkmateHeads,
-        result.losingRequiredHeadDisplay || "-"
-      );
+      const lethalHead = result.losingRequiredHeadDisplay || "-";
 
-      increment(
-        summary.losingRequiredHeads,
-        result.losingRequiredHeadDisplay || "-"
-      );
+      increment(summary.checkmateHeads, lethalHead);
+      increment(summary.losingRequiredHeads, lethalHead);
+
+      if (result.winnerLabel && result.lastMove) {
+        const lethalTransition = makeTransitionLabel(
+          result.lastMove.head,
+          result.lastMove.tail
+        );
+
+        increment(
+          summary.lethalStats.byPlayer[result.winnerLabel].words,
+          result.lastMove.word
+        );
+
+        increment(
+          summary.lethalStats.byPlayer[result.winnerLabel].heads,
+          lethalHead
+        );
+
+        increment(summary.transitionStats.lethal, lethalTransition);
+
+        increment(
+          summary.transitionStats.lethalByPlayer[result.winnerLabel],
+          lethalTransition
+        );
+      }
 
       if (isRuGroup(result.losingRequiredHead)) {
         summary.ruStats.ruCandidateNoneLossCount += 1;
@@ -591,6 +649,8 @@
       usedWords: {},
       usedWordsByPlayer: { A: {}, B: {} },
       usedTails: {},
+      usedTransitions: {},
+      usedTransitionsByPlayer: { A: {}, B: {} },
       ruPassedCount: 0,
       hasRuPassed: false,
       hasLuchabull: false,
@@ -607,6 +667,16 @@
     mergeCounts(summary.usedWordsByPlayer.A, compact.usedWordsByPlayer.A);
     mergeCounts(summary.usedWordsByPlayer.B, compact.usedWordsByPlayer.B);
     mergeCounts(summary.usedTails, compact.usedTails);
+
+    mergeCounts(summary.transitionStats.used, compact.usedTransitions);
+    mergeCounts(
+      summary.transitionStats.usedByPlayer.A,
+      compact.usedTransitionsByPlayer.A
+    );
+    mergeCounts(
+      summary.transitionStats.usedByPlayer.B,
+      compact.usedTransitionsByPlayer.B
+    );
 
     summary.ruStats.ruPassedCount += compact.ruPassedCount;
 
@@ -766,6 +836,9 @@
   }
 
   function renderDetails(summary) {
+    const aName = summary.strategyA.name || summary.strategyA.id;
+    const bName = summary.strategyB.name || summary.strategyB.id;
+
     refs.detailResults.innerHTML = "";
 
     refs.detailResults.appendChild(makeSectionTitle("敗因別集計"));
@@ -781,6 +854,34 @@
     refs.detailResults.appendChild(makeSectionTitle("よく使われた語尾 Top 20"));
     refs.detailResults.appendChild(
       makeMapTable(topEntries(summary.usedTails, 20), ["語尾", "回数"])
+    );
+
+    refs.detailResults.appendChild(makeSectionTitle("使用遷移 Top 20"));
+    refs.detailResults.appendChild(
+      makeMapTable(
+        topEntries(summary.transitionStats.used, 20),
+        ["遷移", "回数"]
+      )
+    );
+
+    refs.detailResults.appendChild(
+      makeSectionTitle(`${aName} の使用遷移 Top 20`)
+    );
+    refs.detailResults.appendChild(
+      makeMapTable(
+        topEntries(summary.transitionStats.usedByPlayer.A, 20),
+        ["遷移", "回数"]
+      )
+    );
+
+    refs.detailResults.appendChild(
+      makeSectionTitle(`${bName} の使用遷移 Top 20`)
+    );
+    refs.detailResults.appendChild(
+      makeMapTable(
+        topEntries(summary.transitionStats.usedByPlayer.B, 20),
+        ["遷移", "回数"]
+      )
     );
 
     refs.detailResults.appendChild(makeSectionTitle("詰ませた文字"));
@@ -806,12 +907,12 @@
         ["戦略", "平均使用単語数/試合", "総使用単語数"],
         [
           [
-            summary.strategyA.name || summary.strategyA.id,
+            aName,
             average(summary.byRole.A.totalMoves, summary.totalGames).toFixed(2),
             summary.byRole.A.totalMoves
           ],
           [
-            summary.strategyB.name || summary.strategyB.id,
+            bName,
             average(summary.byRole.B.totalMoves, summary.totalGames).toFixed(2),
             summary.byRole.B.totalMoves
           ]
@@ -824,6 +925,74 @@
     );
     refs.detailResults.appendChild(
       makeMapTable(topEntries(summary.winningLastWords, 20), ["単語", "回数"])
+    );
+
+    refs.detailResults.appendChild(
+      makeSectionTitle(`${aName} のリーサル単語 Top 20`)
+    );
+    refs.detailResults.appendChild(
+      makeMapTable(
+        topEntries(summary.lethalStats.byPlayer.A.words, 20),
+        ["単語", "回数"]
+      )
+    );
+
+    refs.detailResults.appendChild(
+      makeSectionTitle(`${bName} のリーサル単語 Top 20`)
+    );
+    refs.detailResults.appendChild(
+      makeMapTable(
+        topEntries(summary.lethalStats.byPlayer.B.words, 20),
+        ["単語", "回数"]
+      )
+    );
+
+    refs.detailResults.appendChild(
+      makeSectionTitle(`${aName} のリーサル文字 Top 20`)
+    );
+    refs.detailResults.appendChild(
+      makeMapTable(
+        topEntries(summary.lethalStats.byPlayer.A.heads, 20),
+        ["文字", "回数"]
+      )
+    );
+
+    refs.detailResults.appendChild(
+      makeSectionTitle(`${bName} のリーサル文字 Top 20`)
+    );
+    refs.detailResults.appendChild(
+      makeMapTable(
+        topEntries(summary.lethalStats.byPlayer.B.heads, 20),
+        ["文字", "回数"]
+      )
+    );
+
+    refs.detailResults.appendChild(makeSectionTitle("リーサル遷移 Top 20"));
+    refs.detailResults.appendChild(
+      makeMapTable(
+        topEntries(summary.transitionStats.lethal, 20),
+        ["遷移", "回数"]
+      )
+    );
+
+    refs.detailResults.appendChild(
+      makeSectionTitle(`${aName} のリーサル遷移 Top 20`)
+    );
+    refs.detailResults.appendChild(
+      makeMapTable(
+        topEntries(summary.transitionStats.lethalByPlayer.A, 20),
+        ["遷移", "回数"]
+      )
+    );
+
+    refs.detailResults.appendChild(
+      makeSectionTitle(`${bName} のリーサル遷移 Top 20`)
+    );
+    refs.detailResults.appendChild(
+      makeMapTable(
+        topEntries(summary.transitionStats.lethalByPlayer.B, 20),
+        ["遷移", "回数"]
+      )
     );
 
     refs.detailResults.appendChild(makeSectionTitle("ルを渡した後の勝敗"));
@@ -1122,6 +1291,13 @@
     };
 
     return labels[reason] || reason || "-";
+  }
+
+  function makeTransitionLabel(head, tail) {
+    const safeHead = head || "-";
+    const safeTail = tail || "-";
+
+    return `${safeHead}⇒${safeTail}`;
   }
 
   function isRuGroup(requiredHead) {
