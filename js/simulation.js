@@ -98,7 +98,9 @@
     refs.status.textContent = "シミュレーション中...";
     refs.runButton.disabled = true;
 
-    const results = [];
+    const summary = createEmptySummary(strategyA, strategyB, options);
+    const sampleResults = [];
+
     const timeSliceMs = 25;
     const maxStoredHistories = 10;
     let lastYieldTime = performance.now();
@@ -109,12 +111,11 @@
       const result = playOneGame(strategyA, strategyB, i, options);
 
       attachCompactStats(result, options);
+      addResultToSummary(summary, result);
 
-      if (i >= maxStoredHistories) {
-        result.history = [];
+      if (sampleResults.length < maxStoredHistories) {
+        sampleResults.push(result);
       }
-
-      results.push(result);
 
       const now = performance.now();
       const isLastGame = i + 1 === gameCount;
@@ -134,11 +135,11 @@
       }
     }
 
-    const summary = summarizeResults(results, strategyA, strategyB, options);
+    finalizeSummary(summary);
 
     renderSummary(summary);
     renderDetails(summary);
-    renderSampleLogs(results, options);
+    renderSampleLogs(sampleResults, options);
 
     refs.status.textContent =
       `${gameCount} 試合のシミュレーションが完了しました。`;
@@ -415,12 +416,12 @@
     result.compactStats = compact;
   }
 
-  function summarizeResults(results, strategyA, strategyB, options) {
-    const summary = {
+  function createEmptySummary(strategyA, strategyB, options) {
+    return {
       strategyA,
       strategyB,
       options,
-      totalGames: results.length,
+      totalGames: 0,
       wins: {
         A: 0,
         B: 0
@@ -509,153 +510,159 @@
           A: 0,
           B: 0
         }
-      },
-      results
+      }
     };
+  }
 
-    for (const result of results) {
-      if (result.firstLabel) {
-        summary.firstGames += 1;
-        summary.byRole[result.firstLabel].firstGames += 1;
-        summary.byRole[result.secondLabel].secondGames += 1;
+  function addResultToSummary(summary, result) {
+    summary.totalGames += 1;
+
+    if (result.firstLabel) {
+      summary.firstGames += 1;
+
+      if (result.secondLabel) {
+        summary.secondGames += 1;
       }
 
-      if (result.winnerLabel) {
-        summary.wins[result.winnerLabel] += 1;
-        summary.losses[result.loserLabel] += 1;
+      summary.byRole[result.firstLabel].firstGames += 1;
+      summary.byRole[result.secondLabel].secondGames += 1;
+    }
 
-        if (result.winnerLabel === result.firstLabel) {
-          summary.firstWins += 1;
-          summary.byRole[result.winnerLabel].firstWins += 1;
-        }
+    if (result.winnerLabel) {
+      summary.wins[result.winnerLabel] += 1;
+      summary.losses[result.loserLabel] += 1;
 
-        if (result.winnerLabel === result.secondLabel) {
-          summary.secondWins += 1;
-          summary.byRole[result.winnerLabel].secondWins += 1;
-        }
-      } else {
-        summary.draws += 1;
+      if (result.winnerLabel === result.firstLabel) {
+        summary.firstWins += 1;
+        summary.byRole[result.winnerLabel].firstWins += 1;
       }
 
-      summary.totalTurns += result.turns;
-      summary.minTurns = Math.min(summary.minTurns, result.turns);
-      summary.maxTurns = Math.max(summary.maxTurns, result.turns);
+      if (result.winnerLabel === result.secondLabel) {
+        summary.secondWins += 1;
+        summary.byRole[result.winnerLabel].secondWins += 1;
+      }
+    } else {
+      summary.draws += 1;
+    }
 
-      increment(summary.lossReasons, reasonLabel(result.reason));
+    summary.totalTurns += result.turns;
+    summary.minTurns = Math.min(summary.minTurns, result.turns);
+    summary.maxTurns = Math.max(summary.maxTurns, result.turns);
 
-      updateInitialHeadStats(summary, result);
+    increment(summary.lossReasons, reasonLabel(result.reason));
 
-      if (result.reason === "candidate-none") {
-        increment(
-          summary.checkmateHeads,
-          result.losingRequiredHeadDisplay || "-"
-        );
+    updateInitialHeadStats(summary, result);
 
-        increment(
-          summary.losingRequiredHeads,
-          result.losingRequiredHeadDisplay || "-"
-        );
+    if (result.reason === "candidate-none") {
+      increment(
+        summary.checkmateHeads,
+        result.losingRequiredHeadDisplay || "-"
+      );
 
-        if (isRuGroup(result.losingRequiredHead, result)) {
-          summary.ruStats.ruCandidateNoneLossCount += 1;
-        }
+      increment(
+        summary.losingRequiredHeads,
+        result.losingRequiredHeadDisplay || "-"
+      );
 
-        if (
-          result.lastMove &&
-          result.lastMove.word === SPECIAL_WORD_LUCHABULL
-        ) {
-          summary.ruStats.luchabullDecisiveWinCount += 1;
-        }
+      if (isRuGroup(result.losingRequiredHead)) {
+        summary.ruStats.ruCandidateNoneLossCount += 1;
       }
 
-      if (result.lastMove && result.winnerLabel) {
-        increment(summary.winningLastWords, result.lastMove.word);
-      }
-
-      const gameFlags = {
-        hasFocusWord: false,
-        hasRuPassed: false,
-        hasLuchabull: false
-      };
-
-      const compact = result.compactStats || {
-        totalMovesByPlayer: { A: 0, B: 0 },
-        usedWords: {},
-        usedWordsByPlayer: { A: {}, B: {} },
-        usedTails: {},
-        ruPassedCount: 0,
-        hasRuPassed: false,
-        hasLuchabull: false,
-        luchabullUsedCount: 0,
-        luchabullUsedByPlayer: { A: 0, B: 0 },
-        hasFocusWord: false,
-        focusWordUsedByPlayer: { A: 0, B: 0 }
-      };
-
-      summary.byRole.A.totalMoves += compact.totalMovesByPlayer.A;
-      summary.byRole.B.totalMoves += compact.totalMovesByPlayer.B;
-
-      mergeCounts(summary.usedWords, compact.usedWords);
-      mergeCounts(summary.usedWordsByPlayer.A, compact.usedWordsByPlayer.A);
-      mergeCounts(summary.usedWordsByPlayer.B, compact.usedWordsByPlayer.B);
-      mergeCounts(summary.usedTails, compact.usedTails);
-
-      summary.ruStats.ruPassedCount += compact.ruPassedCount;
-
-      if (compact.hasRuPassed) {
-        gameFlags.hasRuPassed = true;
-      }
-
-      if (compact.hasLuchabull) {
-        gameFlags.hasLuchabull = true;
-        summary.ruStats.luchabullUsedCount += compact.luchabullUsedCount;
-        summary.ruStats.luchabullUsedByPlayer.A +=
-          compact.luchabullUsedByPlayer.A;
-        summary.ruStats.luchabullUsedByPlayer.B +=
-          compact.luchabullUsedByPlayer.B;
-      }
-
-      if (compact.hasFocusWord) {
-        gameFlags.hasFocusWord = true;
-        summary.focusWordStats.usedByPlayer.A +=
-          compact.focusWordUsedByPlayer.A;
-        summary.focusWordStats.usedByPlayer.B +=
-          compact.focusWordUsedByPlayer.B;
-      }
-
-      if (gameFlags.hasRuPassed) {
-        summary.ruPassStats.gamesWithRuPassed += 1;
-
-        if (result.winnerLabel) {
-          summary.ruPassStats.winsAfterRuPassed[result.winnerLabel] += 1;
-          summary.ruPassStats.lossesAfterRuPassed[result.loserLabel] += 1;
-        }
-      }
-
-      if (gameFlags.hasLuchabull) {
-        summary.ruStats.luchabullGames += 1;
-
-        if (result.winnerLabel) {
-          summary.ruStats.luchabullWinner[result.winnerLabel] += 1;
-          summary.ruStats.luchabullLoser[result.loserLabel] += 1;
-        }
-      }
-
-      if (gameFlags.hasFocusWord) {
-        summary.focusWordStats.gamesWithFocusWord += 1;
-
-        if (result.winnerLabel) {
-          summary.focusWordStats.winsAfterFocusWord[result.winnerLabel] += 1;
-          summary.focusWordStats.lossesAfterFocusWord[result.loserLabel] += 1;
-        }
+      if (
+        result.lastMove &&
+        result.lastMove.word === SPECIAL_WORD_LUCHABULL
+      ) {
+        summary.ruStats.luchabullDecisiveWinCount += 1;
       }
     }
 
+    if (result.lastMove && result.winnerLabel) {
+      increment(summary.winningLastWords, result.lastMove.word);
+    }
+
+    const gameFlags = {
+      hasFocusWord: false,
+      hasRuPassed: false,
+      hasLuchabull: false
+    };
+
+    const compact = result.compactStats || {
+      totalMovesByPlayer: { A: 0, B: 0 },
+      usedWords: {},
+      usedWordsByPlayer: { A: {}, B: {} },
+      usedTails: {},
+      ruPassedCount: 0,
+      hasRuPassed: false,
+      hasLuchabull: false,
+      luchabullUsedCount: 0,
+      luchabullUsedByPlayer: { A: 0, B: 0 },
+      hasFocusWord: false,
+      focusWordUsedByPlayer: { A: 0, B: 0 }
+    };
+
+    summary.byRole.A.totalMoves += compact.totalMovesByPlayer.A;
+    summary.byRole.B.totalMoves += compact.totalMovesByPlayer.B;
+
+    mergeCounts(summary.usedWords, compact.usedWords);
+    mergeCounts(summary.usedWordsByPlayer.A, compact.usedWordsByPlayer.A);
+    mergeCounts(summary.usedWordsByPlayer.B, compact.usedWordsByPlayer.B);
+    mergeCounts(summary.usedTails, compact.usedTails);
+
+    summary.ruStats.ruPassedCount += compact.ruPassedCount;
+
+    if (compact.hasRuPassed) {
+      gameFlags.hasRuPassed = true;
+    }
+
+    if (compact.hasLuchabull) {
+      gameFlags.hasLuchabull = true;
+      summary.ruStats.luchabullUsedCount += compact.luchabullUsedCount;
+      summary.ruStats.luchabullUsedByPlayer.A +=
+        compact.luchabullUsedByPlayer.A;
+      summary.ruStats.luchabullUsedByPlayer.B +=
+        compact.luchabullUsedByPlayer.B;
+    }
+
+    if (compact.hasFocusWord) {
+      gameFlags.hasFocusWord = true;
+      summary.focusWordStats.usedByPlayer.A +=
+        compact.focusWordUsedByPlayer.A;
+      summary.focusWordStats.usedByPlayer.B +=
+        compact.focusWordUsedByPlayer.B;
+    }
+
+    if (gameFlags.hasRuPassed) {
+      summary.ruPassStats.gamesWithRuPassed += 1;
+
+      if (result.winnerLabel) {
+        summary.ruPassStats.winsAfterRuPassed[result.winnerLabel] += 1;
+        summary.ruPassStats.lossesAfterRuPassed[result.loserLabel] += 1;
+      }
+    }
+
+    if (gameFlags.hasLuchabull) {
+      summary.ruStats.luchabullGames += 1;
+
+      if (result.winnerLabel) {
+        summary.ruStats.luchabullWinner[result.winnerLabel] += 1;
+        summary.ruStats.luchabullLoser[result.loserLabel] += 1;
+      }
+    }
+
+    if (gameFlags.hasFocusWord) {
+      summary.focusWordStats.gamesWithFocusWord += 1;
+
+      if (result.winnerLabel) {
+        summary.focusWordStats.winsAfterFocusWord[result.winnerLabel] += 1;
+        summary.focusWordStats.lossesAfterFocusWord[result.loserLabel] += 1;
+      }
+    }
+  }
+
+  function finalizeSummary(summary) {
     if (summary.minTurns === Infinity) {
       summary.minTurns = 0;
     }
-
-    return summary;
   }
 
   function updateInitialHeadStats(summary, result) {
@@ -912,13 +919,11 @@
     );
   }
 
-  function renderSampleLogs(results, options) {
+  function renderSampleLogs(sampleResults, options) {
     if (!options.showSampleLogs) {
       refs.sampleLogs.textContent = "サンプルログ表示はOFFです。";
       return;
     }
-
-    const sampleResults = results.slice(0, 10);
 
     const text = sampleResults.map((result, index) => {
       const lines = [];
@@ -1119,7 +1124,7 @@
     return labels[reason] || reason || "-";
   }
 
-  function isRuGroup(requiredHead, result) {
+  function isRuGroup(requiredHead) {
     if (!requiredHead) return false;
 
     const settings = {
