@@ -534,3 +534,46 @@ button {
   font-weight: 700;
   color: #445;
 }
+
+/* 戦略選択モーダル：戦略が増えても決定ボタンが画面外に出ないようにする */
+.strategy-modal-card {
+  width: min(92vw, 560px);
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.strategy-modal-card h2,
+.strategy-modal-card > p {
+  flex: 0 0 auto;
+}
+
+.strategy-list {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  margin: 14px 0;
+  padding-right: 6px;
+}
+
+#startWithStrategyButton {
+  flex: 0 0 auto;
+  align-self: center;
+  margin-top: 10px;
+}
+
+@media (max-height: 620px) {
+  .strategy-modal-card {
+    padding: 18px;
+  }
+
+  .strategy-description {
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .strategy-option {
+    padding: 9px 11px;
+  }
+}
