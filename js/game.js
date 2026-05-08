@@ -13,10 +13,12 @@
 
     const words = App.wordlist || [];
     const settings = App.settings.getRuleSettingsSnapshot();
+    const startMode = getSelectedStartMode();
 
     state = {
       gameCount,
       settings,
+      startMode,
       usedWords: new Set(),
       availableIndex: App.rules.createAvailableIndex(
         words,
@@ -24,12 +26,32 @@
         { excludeN: true }
       ),
       requiredHead: null,
+      isFreeFirstMove: startMode === "userFreeFirst",
       isOver: false
     };
 
     App.ui.hideResultModal();
     App.ui.setInputEnabled(true);
     App.ui.appendDivider(`--- Game ${gameCount} ---`);
+
+    if (startMode === "userFreeFirst") {
+      App.ui.appendSystemMessage(
+        "あなたが先手です。任意の単語から始めてください。"
+      );
+
+      App.ui.setRequiredHead("自由");
+
+      App.debug.logGameStart({
+        settings,
+        startMode,
+        initialOptions: null,
+        selectedInitial: null
+      });
+
+      App.debug.updateForState(state);
+      App.ui.focusInput();
+      return;
+    }
 
     const initialOptions = App.rules.getInitialHeadOptions(
       words,
@@ -54,15 +76,47 @@
       `最初の文字は「${selectedInitial.display}」です。`
     );
 
+    if (startMode === "systemFirst") {
+      App.ui.appendSystemMessage("システムが先手です。");
+    } else {
+      App.ui.appendSystemMessage("あなたが先手です。単語を入力してください。");
+    }
+
     updateRequiredHeadDisplay();
 
     App.debug.logGameStart({
       settings,
+      startMode,
       initialOptions,
       selectedInitial
     });
 
-    systemTurn();
+    App.debug.updateForState(state);
+
+    if (startMode === "systemFirst") {
+      systemTurn();
+    } else {
+      App.ui.focusInput();
+    }
+  }
+
+  function getSelectedStartMode() {
+    const checkedRadio = document.querySelector(
+      'input[name="startMode"]:checked'
+    );
+
+    if (
+      checkedRadio &&
+      (
+        checkedRadio.value === "systemFirst" ||
+        checkedRadio.value === "userFirst" ||
+        checkedRadio.value === "userFreeFirst"
+      )
+    ) {
+      return checkedRadio.value;
+    }
+
+    return "systemFirst";
   }
 
   function handleUserSubmit(rawInput) {
@@ -100,11 +154,15 @@
       return;
     }
 
-    const isHeadValid = App.rules.isHeadMatch(
-      state.requiredHead,
-      wordObj.head,
-      state.settings
-    );
+    const isFreeFirstMove = Boolean(state.isFreeFirstMove);
+
+    const isHeadValid = isFreeFirstMove
+      ? true
+      : App.rules.isHeadMatch(
+          state.requiredHead,
+          wordObj.head,
+          state.settings
+        );
 
     if (!isHeadValid) {
       App.ui.appendSystemMessage(
@@ -143,7 +201,8 @@
       isHeadValid,
       isUsed,
       isEndingN,
-      isSurrender: false
+      isSurrender: false,
+      isFreeFirstMove
     });
 
     if (isEndingN) {
@@ -176,6 +235,7 @@
         isUsed,
         isEndingN,
         isSurrender: false,
+        isFreeFirstMove,
         result: "retry",
         reason: "already-used"
       });
@@ -186,6 +246,16 @@
 
     acceptWord("user", wordObj);
     App.ui.clearInput();
+
+    if (isFreeFirstMove) {
+      state.isFreeFirstMove = false;
+
+      App.ui.appendSystemMessage(
+        `あなたの初手「${wordObj.word}」から開始しました。`
+      );
+
+      updateRequiredHeadDisplay();
+    }
 
     if (!state.isOver) {
       systemTurn();
@@ -269,6 +339,11 @@
   }
 
   function updateRequiredHeadDisplay() {
+    if (!state.requiredHead) {
+      App.ui.setRequiredHead("自由");
+      return;
+    }
+
     App.ui.setRequiredHead(
       App.rules.displayRequiredHead(state.requiredHead, state.settings)
     );

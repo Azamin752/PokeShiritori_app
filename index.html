@@ -82,7 +82,24 @@
       <p>このゲームで対戦するシステム戦略を選んでください。</p>
 
       <div id="strategyList" class="strategy-list"></div>
+      <div class="first-player-box">
+      <div class="first-player-title">開始方法</div>
 
+      <label class="first-player-option">
+        <input type="radio" name="startMode" value="systemFirst" checked>
+        システム先手
+      </label>
+
+      <label class="first-player-option">
+        <input type="radio" name="startMode" value="userFirst">
+        ユーザー先手
+      </label>
+
+      <label class="first-player-option">
+        <input type="radio" name="startMode" value="userFreeFirst">
+        ユーザー先手・任意単語開始
+      </label>
+    </div>
       <button id="startWithStrategyButton" type="button" disabled>
         この戦略で開始
       </button>
